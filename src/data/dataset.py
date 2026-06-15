@@ -1,8 +1,7 @@
 import yaml
-from datasets import load_dataset
-from transformers import BertTokenizerFast
-from torch.utils.data import Dataset
 import torch
+from torch.utils.data import Dataset
+from transformers import BertTokenizerFast
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -10,18 +9,51 @@ def load_config(path: str = "config.yaml") -> dict:
         return yaml.safe_load(f)
 
 
-def load_bc5cdr(split: str = "train"):
-    """Load BC5CDR from HuggingFace datasets."""
-    dataset = load_dataset("ncbi/ncbi_disease", split=split)
-    return dataset
+# Label mapping — fixed, we know the labels from the data
+LABEL2ID = {"O": 0, "B-Entity": 1, "I-Entity": 2}
+ID2LABEL = {v: k for k, v in LABEL2ID.items()}
 
 
-def get_label_mapping(dataset) -> tuple[dict, dict]:
-    """Extract label2id and id2label from dataset features."""
-    label_names = dataset.features["ner_tags"].feature.names
-    label2id = {label: idx for idx, label in enumerate(label_names)}
-    id2label = {idx: label for label, idx in label2id.items()}
-    return label2id, id2label
+def parse_conll(path: str) -> list[dict]:
+    """
+    Parse CoNLL-format file into list of sentences.
+    Each sentence: {"tokens": [...], "ner_tags": [...]}
+    Format: token | POS | chunk | NER_label (tab-separated)
+    Sentences separated by blank lines, docs by -DOCSTART- lines.
+    """
+    sentences = []
+    tokens, tags = [], []
+
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+
+            # Skip doc boundary markers
+            if line.startswith("-DOCSTART-"):
+                continue
+
+            # Blank line = sentence boundary
+            if line.strip() == "":
+                if tokens:
+                    sentences.append({"tokens": tokens, "ner_tags": tags})
+                    tokens, tags = [], []
+                continue
+
+            parts = line.split("\t")
+            if len(parts) < 4:
+                continue
+
+            token = parts[0]
+            label = parts[3]
+
+            tokens.append(token)
+            tags.append(LABEL2ID.get(label, 0))  # default O if unknown
+
+    # Catch final sentence if file doesn't end with blank line
+    if tokens:
+        sentences.append({"tokens": tokens, "ner_tags": tags})
+
+    return sentences
 
 
 class BC5CDRDataset(Dataset):
@@ -30,10 +62,12 @@ class BC5CDRDataset(Dataset):
         self.tokenizer = tokenizer
         self.max_len = config["model"]["max_seq_len"]
         self.label_all_tokens = config["data"]["label_all_tokens"]
+        self.label2id = LABEL2ID
+        self.id2label = ID2LABEL
 
-        raw = load_bc5cdr(split)
-        self.label2id, self.id2label = get_label_mapping(raw)
-        self.examples = list(raw)
+        split_map = {"train": "train.txt", "validation": "dev.txt", "test": "test.txt"}
+        path = f"data/raw/{split_map[split]}"
+        self.examples = parse_conll(path)
 
     def __len__(self) -> int:
         return len(self.examples)
@@ -41,7 +75,7 @@ class BC5CDRDataset(Dataset):
     def __getitem__(self, idx: int) -> dict:
         example = self.examples[idx]
         tokens = example["tokens"]
-        ner_tags = example["ner_tags"] 
+        ner_tags = example["ner_tags"]
 
         encoding = self.tokenizer(
             tokens,
@@ -64,8 +98,8 @@ class BC5CDRDataset(Dataset):
         """
         Align word-level NER tags to subword tokens.
         - First subword of a word: gets the original label
-        - Subsequent subwords: get -100 (ignored in loss) if label_all_tokens=False
-        - Special tokens ([CLS], [SEP], [PAD]): get -100
+        - Subsequent subwords: -100 (ignored in loss)
+        - Special tokens [CLS], [SEP], [PAD]: -100
         """
         word_ids = encoding.word_ids(batch_index=0)
         labels = []
@@ -73,16 +107,13 @@ class BC5CDRDataset(Dataset):
 
         for word_id in word_ids:
             if word_id is None:
-                # Special token — ignore in loss
                 labels.append(-100)
             elif word_id != prev_word_id:
-                # First subword of this word — use real label
                 labels.append(ner_tags[word_id])
             else:
-                # Subsequent subword — ignore or copy label
                 labels.append(ner_tags[word_id] if self.label_all_tokens else -100)
             prev_word_id = word_id
 
         # Pad to max_len
-        labels += [-100] * (self.config["model"]["max_seq_len"] - len(labels))
-        return torch.tensor(labels, dtype=torch.long)
+        labels += [-100] * (self.max_len - len(labels))
+        return torch.tensor(labels[:self.max_len], dtype=torch.long)
