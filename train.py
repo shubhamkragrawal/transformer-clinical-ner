@@ -76,7 +76,11 @@ def main():
     config = load_config()
     set_seed(config["training"]["seed"])
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(
+    "mps" if torch.backends.mps.is_available() # working on macbook
+    else "cuda" if torch.cuda.is_available()
+    else "cpu"
+)
     print(f"Using device: {device}")
 
     tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
