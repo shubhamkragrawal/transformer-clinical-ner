@@ -61,3 +61,38 @@ class EncoderLayer(nn.Module):
         x = x + self.dropout2(ff_output)  # residual connection
 
         return x
+
+class TransformerEncoder(nn.Module):
+    """
+    Stack of N identical EncoderLayer blocks.
+    Includes a final LayerNorm — standard for pre-LN architectures,
+    since the last residual output is never normalized otherwise.
+    """
+
+    def __init__(
+        self,
+        num_layers: int,
+        d_model: int,
+        num_heads: int,
+        ff_dim: int,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.layers = nn.ModuleList(
+            [EncoderLayer(d_model, num_heads, ff_dim, dropout) for _ in range(num_layers)]
+        )
+        self.final_norm = nn.LayerNorm(d_model)
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
+        for layer in self.layers:
+            x = layer(x, mask=mask)
+        return self.final_norm(x)
+
+
+def create_padding_mask(attention_mask: torch.Tensor) -> torch.Tensor:
+    """
+    Converts tokenizer's attention_mask (batch, seq_len) — 1 for real
+    tokens, 0 for padding — into the shape MultiHeadAttention expects:
+    (batch, 1, 1, seq_len), which broadcasts over heads and query positions.
+    """
+    return attention_mask.unsqueeze(1).unsqueeze(2)
