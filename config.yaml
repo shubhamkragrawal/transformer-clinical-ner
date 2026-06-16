@@ -16,7 +16,7 @@ training:
   grad_clip: 1.0
   seed: 42
 
-data:
+data: 
   dataset: "ncbi/ncbi_disease"
   label_all_tokens: false
 
