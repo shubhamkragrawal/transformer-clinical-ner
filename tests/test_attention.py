@@ -1,6 +1,6 @@
 import torch
 import pytest
-from src.model.attention import scaled_dot_product_attention
+from src.model.attention import scaled_dot_product_attention, MultiHeadAttention
 
 
 @pytest.fixture
@@ -56,3 +56,45 @@ def test_dropout_applied_in_training_mode(qkv):
 
     # With p=0.5 dropout active, some weights should be zeroed out
     assert (attn_weights == 0).any()
+
+def test_multihead_attention_output_shapes():
+    torch.manual_seed(42)
+    batch, seq_len, d_model, num_heads = 2, 10, 256, 8
+
+    mha = MultiHeadAttention(d_model, num_heads)
+    x = torch.randn(batch, seq_len, d_model)
+
+    output, attn_weights = mha(x, x, x)
+
+    assert output.shape == (batch, seq_len, d_model)
+    assert attn_weights.shape == (batch, num_heads, seq_len, seq_len)
+
+
+def test_multihead_attention_masking_eval_mode():
+    """Sums should be exactly 1.0 only when dropout is disabled (eval mode)."""
+    torch.manual_seed(42)
+    batch, seq_len, d_model, num_heads = 2, 10, 256, 8
+
+    mha = MultiHeadAttention(d_model, num_heads)
+    mha.eval()
+
+    x = torch.randn(batch, seq_len, d_model)
+    mask = torch.ones(batch, 1, 1, seq_len)
+    mask[:, :, :, 7:] = 0
+
+    with torch.no_grad():
+        output, attn_weights = mha(x, x, x, mask=mask)
+
+    # Masked positions get zero weight
+    assert torch.allclose(
+        attn_weights[:, :, :, 7:], torch.zeros_like(attn_weights[:, :, :, 7:])
+    )
+
+    # Remaining weights sum to exactly 1.0 in eval mode
+    row_sums = attn_weights.sum(dim=-1)
+    assert torch.allclose(row_sums, torch.ones_like(row_sums), atol=1e-5)
+
+
+def test_d_model_must_be_divisible_by_num_heads():
+    with pytest.raises(AssertionError):
+        MultiHeadAttention(d_model=100, num_heads=8)  # 100/8 not integer
