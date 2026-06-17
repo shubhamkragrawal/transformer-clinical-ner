@@ -83,8 +83,17 @@ def main():
 
         if val_f1 > best_f1:
             best_f1 = val_f1
-            save_checkpoint(model, "checkpoints/best_model.pt", epoch)
-            print(f"  -> new best model saved (val_f1={val_f1:.4f})")
+            save_checkpoint(
+            model, "checkpoints/best_model.pt", epoch,
+            config=config,
+            metrics={
+                    "val_loss"  : float(val_loss),
+                    "val_f1"    : float(val_f1),
+                    "precision" : float(f1_results["precision"]),
+                    "recall"    : float(f1_results["recall"]),
+                },
+    )
+    print(f"  -> new best model saved (val_f1={val_f1:.4f})")
 
     total_time = time.time() - start
     print(f"\nTotal training time: {total_time/60:.1f} min")
@@ -92,7 +101,7 @@ def main():
     print(f"Best val_f1 seen:   {best_f1:.4f}")
 
     print("\nRe-loading best checkpoint (by F1) for final report...")
-    checkpoint = torch.load("checkpoints/best_model.pt", map_location=device)
+    checkpoint = torch.load("checkpoints/best_model.pt", map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
     print(f"Loaded checkpoint from epoch {checkpoint['epoch']+1}")
 

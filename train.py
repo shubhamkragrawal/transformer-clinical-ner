@@ -67,9 +67,14 @@ def evaluate(
     return total_loss / len(loader)
 
 
-def save_checkpoint(model: torch.nn.Module, path: str, epoch: int) -> None:
+def save_checkpoint(model: torch.nn.Module, path: str, epoch: int, config: dict, metrics: dict = None) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    torch.save({"model_state_dict": model.state_dict(), "epoch": epoch}, path)
+    torch.save({
+        "model_state_dict": model.state_dict(),
+        "epoch": epoch,
+        "config": config,
+        "metrics": metrics or {},
+    }, path)
 
 
 def main():
