@@ -78,16 +78,11 @@ def evaluate_f1(
 
 
 def run_bert_baseline(config: dict, device: torch.device) -> dict:
-    """
-    Fine-tunes a pretrained BERT for token classification on the same
-    data, as a comparison point for the from-scratch model. ~20 lines
-    via HuggingFace, exactly the point of having it: a credible number
-    to compare your from-scratch F1 against.
-    """
     from transformers import BertForTokenClassification, BertTokenizerFast
     from torch.utils.data import DataLoader
     from src.data.dataset import BC5CDRDataset
     from src.train_utils import get_optimizer, get_scheduler
+    import time
 
     tokenizer = BertTokenizerFast.from_pretrained("bert-base-uncased")
     train_ds = BC5CDRDataset("train", config, tokenizer)
@@ -106,6 +101,9 @@ def run_bert_baseline(config: dict, device: torch.device) -> dict:
 
     model.train()
     for epoch in range(config["training"]["epochs"]):
+        epoch_start = time.time()
+        total_loss = 0.0
+
         for batch in train_loader:
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
@@ -117,6 +115,18 @@ def run_bert_baseline(config: dict, device: torch.device) -> dict:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config["training"]["grad_clip"])
             optimizer.step()
             scheduler.step()
+
+            total_loss += outputs.loss.item()
+
+        avg_loss = total_loss / len(train_loader)
+        epoch_time = time.time() - epoch_start
+        remaining = (config["training"]["epochs"] - epoch - 1) * epoch_time
+
+        print(
+            f"  [BERT] Epoch {epoch+1}/{config['training']['epochs']} "
+            f"| train_loss={avg_loss:.4f} | time={epoch_time:.1f}s "
+            f"| est. remaining={remaining/60:.1f} min"
+        )
 
     # Evaluate using the same decode_predictions logic
     model.eval()
