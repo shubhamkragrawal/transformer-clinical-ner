@@ -2,6 +2,7 @@ import yaml
 import torch
 from torch.utils.data import Dataset
 from transformers import BertTokenizerFast
+from src.data.alignment import align_labels_to_subwords
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -86,34 +87,12 @@ class BC5CDRDataset(Dataset):
             return_tensors="pt",
         )
 
-        labels = self._align_labels(encoding, ner_tags)
+        labels = align_labels_to_subwords(
+            encoding, ner_tags, self.max_len, self.label_all_tokens
+        )
 
         return {
             "input_ids": encoding["input_ids"].squeeze(0),
             "attention_mask": encoding["attention_mask"].squeeze(0),
             "labels": labels,
         }
-
-    def _align_labels(self, encoding, ner_tags: list[int]) -> torch.Tensor:
-        """
-        Align word-level NER tags to subword tokens.
-        - First subword of a word: gets the original label
-        - Subsequent subwords: -100 (ignored in loss)
-        - Special tokens [CLS], [SEP], [PAD]: -100
-        """
-        word_ids = encoding.word_ids(batch_index=0)
-        labels = []
-        prev_word_id = None
-
-        for word_id in word_ids:
-            if word_id is None:
-                labels.append(-100)
-            elif word_id != prev_word_id:
-                labels.append(ner_tags[word_id])
-            else:
-                labels.append(ner_tags[word_id] if self.label_all_tokens else -100)
-            prev_word_id = word_id
-
-        # Pad to max_len
-        labels += [-100] * (self.max_len - len(labels))
-        return torch.tensor(labels[:self.max_len], dtype=torch.long)

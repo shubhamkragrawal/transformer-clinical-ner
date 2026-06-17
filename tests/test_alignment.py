@@ -1,7 +1,7 @@
 import pytest
 from transformers import BertTokenizerFast
 from src.data.dataset import BC5CDRDataset, load_config, LABEL2ID, ID2LABEL
-
+from src.data.alignment import align_labels_to_subwords
 
 @pytest.fixture(scope="module")
 def tokenizer():
@@ -98,3 +98,40 @@ def test_padding_positions_have_zero_attention_mask(train_dataset):
     assert attention_mask.count(0) + attention_mask.count(1) == len(attention_mask)
     # First mask value must be 1 ([CLS] always present)
     assert attention_mask[0] == 1
+
+def test_align_labels_standalone_first_subword_gets_real_label(tokenizer):
+    tokens = ["naloxone", "reverses"]
+    ner_tags = [1, 0]  # B-Entity, O
+
+    encoding = tokenizer(
+        tokens, is_split_into_words=True, max_length=16,
+        padding="max_length", truncation=True, return_tensors="pt",
+    )
+    labels = align_labels_to_subwords(encoding, ner_tags, max_len=16)
+
+    word_ids = encoding.word_ids(batch_index=0)
+    seen_words = set()
+    for i, word_id in enumerate(word_ids):
+        if word_id is None:
+            assert labels[i].item() == -100
+        elif word_id not in seen_words:
+            assert labels[i].item() == ner_tags[word_id]
+            seen_words.add(word_id)
+        else:
+            assert labels[i].item() == -100
+
+
+def test_align_labels_label_all_tokens_true(tokenizer):
+    tokens = ["naloxone"]
+    ner_tags = [1]
+
+    encoding = tokenizer(
+        tokens, is_split_into_words=True, max_length=16,
+        padding="max_length", truncation=True, return_tensors="pt",
+    )
+    labels = align_labels_to_subwords(encoding, ner_tags, max_len=16, label_all_tokens=True)
+
+    word_ids = encoding.word_ids(batch_index=0)
+    for i, word_id in enumerate(word_ids):
+        if word_id is not None:
+            assert labels[i].item() == ner_tags[word_id]
